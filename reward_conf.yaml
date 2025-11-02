@@ -39,6 +39,10 @@ global_config:
     step: 1000
     #早起格式开蒙，线性退火到step_T * step趋近于零
     step_T: 0.1
+   
+    #格式启蒙
+    step_Fromat: 0.2
+
     #列表规范，线性退火到step_Tw * step 趋近于零
     step_Tw: 0.4
  
