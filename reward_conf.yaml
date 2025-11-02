@@ -22,14 +22,24 @@ hard_conf:
 soft_conf:
   # 早期扶梯相关列表（结构：[指标, 早期格式开蒙, 列表规范]）
   early_escalator:
-    - [W5, 0.4, 0.3]
-    - [W6, 0.3, 0.5]
+    W5: 0.4
+    W6: 0.3
 
  #用于W5,W6的门阈值sig控制参数
   T0: 0.2
   T1: 0.6
   A0: 2
   A1: 8
+
+  #R2比R3的权重，也就是α，smix=αR2Clip + (1-阿尔法)R3Clip
+  R2VR3 : 0.7
+
+  #R2 SOFT 
+  R2_SOFT : 0.8
+  #R3 SOFT 
+  R3_SOFT : 0.5
+
+
   
 
 

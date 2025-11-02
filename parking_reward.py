@@ -5,6 +5,25 @@ import yaml
 from pathlib import Path
 from typing import Dict, List, Union, Optional
 from typing import List
+import numpy as np 
+import math
+import tkinter as tk
+from tkinter import ttk, Label
+from typing import List
+from pathlib import Path
+import yaml
+import matplotlib.pyplot as plt
+
+
+#大于1取1，小于零取零
+def clip01(num: float) -> float:
+    return max(0.0, min(num, 1.0))
+
+#sigmoid激活
+def sigmoid(a:float ,t:float) ->float:
+    return 1/(1+np.exp(-a*t))
+
+
 
 
 class ConfigYAML:
@@ -107,36 +126,28 @@ class GlobalConfig:
                 float(weights_list[0][1]),
                 float(weights_list[1][1]),
                 float(weights_list[2][1]),
-                float(weights_list[3][1]),
-                float(escalator_list[0][1]),  # 取数值部分（索引1）
-                float(escalator_list[1][1])
+                float(weights_list[3][1])
             ])
         elif current_step < step_Fromat_threshold:
             weights.extend([
                 float(weights_list[0][2]),
                 float(weights_list[1][2]),
                 float(weights_list[2][2]),
-                float(weights_list[3][2]),
-                float(escalator_list[0][2]),
-                float(escalator_list[1][2])
+                float(weights_list[3][2])
             ])
         elif current_step < step_Tw_threshold:
             weights.extend([
                 float(weights_list[0][3]),
                 float(weights_list[1][3]),
                 float(weights_list[2][3]),
-                float(weights_list[3][3]),
-                float(escalator_list[0][2]),
-                float(escalator_list[1][2])
+                float(weights_list[3][3])
             ])
         else:
             weights.extend([
                 float(weights_list[0][4]),
                 float(weights_list[1][4]),
                 float(weights_list[2][4]),
-                float(weights_list[3][4]),
-                0.0,
-                0.0
+                float(weights_list[3][4])
             ])
 
         return weights
@@ -157,6 +168,67 @@ class GlobalConfig:
         global_config = config.get_global_config()
         step_Tw_threshold = global_config.get("step_Tw", 0) * self.global_all_step
         return step_Tw_threshold
+    
+    def get_soft_tau (self ,step :int)->float:
+        config = self.getConfig()
+        soft_config = config.get_soft_conf()
+
+        return (float)(soft_config.get("T0") + (soft_config.get("T1")-soft_config.get("T0"))*step/self.global_all_step)
+    
+    def get_soft_a (self ,step:int)->float:
+        config = self.getConfig()
+        soft_config = config.get_soft_conf()
+        return (float)(soft_config.get("A0") + (soft_config.get("A1")-soft_config.get("A0"))*step/self.global_all_step)
+    
+    ##归一化最终得到门值
+    def get_soft_gate(self ,R2_SOFT : float , R3_SOFT:float ,step:int)->float:
+        #首先对R2,R3进行mix剪裁（1）.用mix裁剪，把R2,和R3裁剪为[0,1](小于等于零取零，大于等于1取1),得到R2clip,R3clip
+        R2_SOFT_MIX = clip01(R2_SOFT)
+        R3_SOFT_MIX = clip01(R3_SOFT)
+
+        config = self.getConfig()
+        soft_config = config.get_soft_conf()
+
+        #    α软*R2clip+(1-α软)*R3clip
+        SMix = float(soft_config.get("R2VR3") * R2_SOFT_MIX + (1-soft_config.get("R2VR3")) * R3_SOFT_MIX)
+
+        #gate（t）=Sig（a(t)*(SMix-τ（t）)）=1/1+e^(-(a(t)*(SMix-τ(t))))        
+        return sigmoid(self.get_soft_a(step),(float)(SMix - self.get_soft_tau(step)))
+    
+    #获取退火后的动态w5,w6权重
+    def get_w5_SA(self ,step:int):
+        config = self.getConfig()
+        early_escalator = config.get_early_escalator()
+        gConf = config.get_global_config()
+
+        #线性退火终点
+        T_end  = gConf.get("step_Tw") * self.global_all_step
+        C=min(1,(float)(step/T_end))
+
+        #w5
+        return  (1 + math.cos(math.pi * C))/2 * early_escalator.get("W5", 0.0) 
+        
+    def get_w6_SA(self ,step:int):
+        config = self.getConfig()
+        early_escalator = config.get_early_escalator()
+        gConf = config.get_global_config()
+
+        #线性退火终点
+        T_end  = gConf.get("step_Tw") * self.global_all_step
+        C=min(1,(float)(step/T_end))
+
+        #w5
+        return  (1 + math.cos(math.pi * C))/2 * early_escalator.get("W6", 0.0) 
+    
+    #把R5,R6 的贡献×门值（动态）×权重（动态退火）
+    #Aux(t)=gate(t)*(w5(t)*R5+w6(t)*R6)
+    def aux_all(self , R2_SOFT:float ,R3_SOFT:float ,step:int) -> float:
+        R2_END = self.get_w5_SA(step) *R2_SOFT
+        R3_END = self.get_w6_SA(step) * R3_SOFT
+
+        return (float)(self.get_soft_gate(R2_SOFT,R3_SOFT,step)*(R2_END+R3_END))
+        
+
 
 def test():
     cfg = GlobalConfig(1000)
@@ -192,6 +264,161 @@ def test():
     print(f"T:${cfg.getStep_T()}")
     print(f"T:${cfg.getStep_Fromat()}")
     print(f"T:${cfg.getStep_Tw()}")
+
+
+
+    current_step=10
+    R2_soft = 0.8
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+    current_step=10
+    R2_soft = 0
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=10
+    R2_soft = 0.8
+    R3_soft = 0
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=10
+    R2_soft = 0
+    R3_soft = 0
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+
+    current_step=120
+    R2_soft = 0.8
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+    current_step=120
+    R2_soft = 0
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=120
+    R2_soft = 0.8
+    R3_soft = 0
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=120
+    R2_soft = 0
+    R3_soft = 0
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+
+
+    current_step=240
+    R2_soft = 0.8
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+    current_step=240
+    R2_soft = 0
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=240
+    R2_soft = 0.8
+    R3_soft = 0
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=240
+    R2_soft = 0
+    R3_soft = 0
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+
+
+    current_step=600
+    R2_soft = 0.8
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+    current_step=600
+    R2_soft = 0
+    R3_soft = 0.5
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=600
+    R2_soft = 0.8
+    R3_soft = 0
+
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    
+
+    current_step=600
+    R2_soft = 0
+    R3_soft = 0
+
+    print (f"在第 ${current_step} 步 ， R2_soft 得到了  ${R2_soft}   , R3_soft 得到了  ${R3_soft} ,  最终得分为 ${cfg.aux_all(R2_soft,R3_soft,current_step)} ")
+    x = range(1000)  # step从0到999
+    y1 = [cfg.get_w5_SA(step) for step in x]  # W5的退火值
+    y2 = [cfg.get_w6_SA(step) for step in x]  # W6的退火值
+    
+    # 创建画布
+    plt.figure(figsize=(10, 6))
+    
+    # 绘制两条曲线
+    plt.plot(x, y1, label='Dynamic W5 value ', color='blue', linewidth=2)
+    plt.plot(x, y2, label='Dynamic W6 value ', color='red', linewidth=2)
+    
+    # 添加标题和标签
+    plt.title(' step=0~999）', fontsize=14)
+    plt.xlabel('Step', fontsize=12)
+    plt.ylabel('value after SA  ', fontsize=12)
+    
+    # 添加网格和图例
+    plt.grid(alpha=0.3)  # 网格线透明度0.3
+    plt.legend()  # 显示图例
+    
+    # 显示图形
+    plt.show()
+
+   
+
+
 
 
 if __name__ == "__main__":
