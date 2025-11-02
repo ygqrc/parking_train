@@ -1,0 +1,236 @@
+# test_reward.py
+# -*- coding: utf-8 -*-
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import math
+import numpy as np
+
+# === 假设被测模块名为 reward.py（请按你的实际文件名修改这里）===
+# from reward import ConfigYAML, GlobalConfig, clip01, stable_sigmoid  # 如果用了修正版
+from parking_reward import ConfigYAML, GlobalConfig, clip01, sigmoid  # 如果还在用原 sigmoid
+
+TEST_YAML = """\
+hard_conf:
+  K1: 8
+  K2: 10
+  k3: 12
+  t1: 0.6
+  t2: 0.7
+  t3: 0.6
+  weights:
+    - [W1, 0.7, 0.4, 0.1, 0.05]
+    - [W2, 0.25, 0.4, 0.30, 0.05]
+    - [W3, 0.5, 0.35, 0.40, 0.20]
+    - [W4, 0, 0.25, 0.30, 0.70]
+
+soft_conf:
+  early_escalator:
+    W5: 0.4
+    W6: 0.3
+  T0: 0.2
+  T1: 0.6
+  A0: 2
+  A1: 8
+  R2VR3 : 0.7
+  R2_SOFT : 0.8
+  R3_SOFT : 0.5
+
+global_config:
+  step: 1000
+  step_T: 0.1
+  step_Fromat: 0.2
+  step_Tw: 0.4
+"""
+
+class RewardTestCase(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # 在临时目录落地 YAML，并构造配置
+        cls._tmpdir = tempfile.TemporaryDirectory()
+        cls.yaml_path = Path(cls._tmpdir.name) / "reward_conf.yaml"
+        cls.yaml_path.write_text(TEST_YAML, encoding="utf-8")
+
+        # 如果你用的是修正版：ConfigYAML(path=...)
+        cls.config = ConfigYAML(path=cls.yaml_path)  # 修正版
+        # 如果你还是原版（不支持 path），将上一行改为：
+        # cls.config = ConfigYAML()
+
+        cls.total_steps = 1000
+        cls.cfg = GlobalConfig(cls.total_steps, config=cls.config)  # 修正版
+        # 如果原版 GlobalConfig 不支持传 config=...，则改为：
+        # cls.cfg = GlobalConfig(cls.total_steps)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmpdir.cleanup()
+
+    # ---------- 工具函数 ----------
+    def almost(self, x, y, tol=1e-7):
+        self.assertTrue(abs(x - y) <= tol, msg=f"{x} !~= {y}")
+
+    # ---------- 基础函数 ----------
+    def test_clip01(self):
+        self.assertEqual(clip01(-1.2), 0.0)
+        self.assertEqual(clip01(2.3), 1.0)
+        self.almost(clip01(0.37), 0.37)
+
+    def test_sigmoid_like(self):
+        # 原始实现 sigmoid(a,t) = 1/(1+exp(-a*t))
+        # 简单检查：单调性 & 极限
+        self.almost(sigmoid(0.0, 1000.0), 0.5)   # z=0
+        self.assertGreater(sigmoid(10.0, 1.0), 0.9999)
+        self.assertLess(sigmoid(10.0, -1.0), 0.0001)
+        # 数值一致性（与直接算 1/(1+e^{-z})）
+        for a, t in [(1.7, 0.3), (-0.8, 2.0), (3.2, -0.5)]:
+            z = a * t
+            ref = 1.0 / (1.0 + math.exp(-z))
+            self.almost(sigmoid(a, t), ref, 1e-10)
+
+    # ---------- 配置访问 ----------
+    def test_config_read(self):
+        hard = self.config.get_hard_conf()
+        soft = self.config.get_soft_conf()
+        g    = self.config.get_global_config()
+        self.assertIsInstance(hard, dict)
+        self.assertIsInstance(soft, dict)
+        self.assertIsInstance(g, dict)
+        self.assertEqual(hard["K1"], 8)
+        self.assertEqual(hard["k3"], 12)
+        self.assertEqual(g["step"], 1000)
+
+    # ---------- 阶段阈值 ----------
+    def test_thresholds(self):
+        self.assertEqual(self.cfg.getStep_T(), int(0.1 * self.total_steps))        # 100
+        self.assertEqual(self.cfg.getStep_Fromat(), int(0.2 * self.total_steps))   # 200
+        self.assertEqual(self.cfg.getStep_Tw(), int(0.4 * self.total_steps))       # 400
+
+    # ---------- 阶段化权重选择 ----------
+    def test_stage_weights(self):
+        # 4 阶段列值（对应 YAML）
+        col_T      = [0.7, 0.25, 0.5, 0.0]
+        col_Fromat = [0.4, 0.4, 0.35, 0.25]
+        col_Tw     = [0.1, 0.30, 0.40, 0.30]
+        col_final  = [0.05, 0.05, 0.20, 0.70]
+
+        # step < 100 → col=1（T阶段）
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(0)],
+                         [round(x, 5) for x in col_T])
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(99)],
+                         [round(x, 5) for x in col_T])
+
+        # 100 ≤ step < 200 → col=2（Fromat阶段）
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(100)],
+                         [round(x, 5) for x in col_Fromat])
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(199)],
+                         [round(x, 5) for x in self.cfg.getWeights(100)])
+
+        # 200 ≤ step < 400 → col=3（Tw阶段）
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(200)],
+                         [round(x, 5) for x in col_Tw])
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(399)],
+                         [round(x, 5) for x in self.cfg.getWeights(200)])
+
+        # ≥ 400 → col=4（final阶段）
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(400)],
+                         [round(x, 5) for x in col_final])
+        self.assertEqual([round(x, 5) for x in self.cfg.getWeights(1000)],
+                         [round(x, 5) for x in col_final])
+
+    def test_getWeights_invalid_step(self):
+        with self.assertRaises(ValueError):
+            _ = self.cfg.getWeights(-1)
+        with self.assertRaises(ValueError):
+            _ = self.cfg.getWeights(self.total_steps + 1)
+
+    # ---------- 软门控插值 ----------
+    def test_soft_params_interpolation(self):
+        # τ(t), a(t) 线性插值
+        self.almost(self.cfg.get_soft_tau(0), 0.2)
+        self.almost(self.cfg.get_soft_tau(self.total_steps), 0.6)
+        self.almost(self.cfg.get_soft_a(0), 2.0)
+        self.almost(self.cfg.get_soft_a(self.total_steps), 8.0)
+
+    def test_gate_monotonic(self):
+        step = 100
+        # 增大 R2/R3 → gate 增大（其他参数不变）
+        g1 = self.cfg.get_soft_gate(0.1, 0.1, step)
+        g2 = self.cfg.get_soft_gate(0.8, 0.1, step)  # 提高 R2
+        g3 = self.cfg.get_soft_gate(0.8, 0.8, step)  # 再提高 R3
+        self.assertLess(g1, g2)
+        self.assertLess(g2, g3)
+
+    # ---------- 扶梯 + 余弦退火 ----------
+    def test_anneal_w5_w6(self):
+        T_end = self.cfg.getStep_Tw()  # 400
+        w5_0  = self.cfg.get_w5_SA(0)
+        w5_e  = self.cfg.get_w5_SA(T_end)
+        w5_mid= self.cfg.get_w5_SA(T_end // 2)
+        # 初始等于 base（cos(0)=1）
+        self.almost(w5_0, 0.4)
+        # 终点接近 0（cos(pi)=-1）
+        self.almost(w5_e, 0.0, 1e-12)
+        # 中点为 0.5*(1+cos(pi/2))*base = 0.5*1*base = base/2
+        self.almost(w5_mid, 0.4/2)
+
+        # W6 同理
+        self.almost(self.cfg.get_w6_SA(0), 0.3)
+        self.almost(self.cfg.get_w6_SA(T_end), 0.0, 1e-12)
+
+    # ---------- Aux 行为 ----------
+    def test_aux_all_behavior(self):
+        step = 120
+        a = self.cfg.aux_all(0.0, 0.0, step)
+        b = self.cfg.aux_all(0.8, 0.0, step)
+        c = self.cfg.aux_all(0.8, 0.5, step)
+        # 非负、且随 R2/R3 增大而增大
+        self.assertGreaterEqual(a, 0.0)
+        self.assertLess(a, b)
+        self.assertLess(b, c)
+
+        # 极端：当 step 很大、退火趋近 0，则 Aux 接近 0
+        big = self.cfg.aux_all(1.0, 1.0, self.total_steps)  # > T_end
+        self.assertLess(big, 1e-6)
+
+if __name__ == "__main__":
+    import argparse
+    import matplotlib.pyplot as plt
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plot", action="store_true",
+                        help="在单元测试结束后绘制 W5/W6 的退火曲线")
+    parser.add_argument("--steps", type=int, default=1000,
+                        help="总步数（默认 1000）")
+    parser.add_argument("--yaml", type=str, default=None,
+                        help="可选：自定义 reward_conf.yaml 的路径；不填则用模块同目录的默认路径")
+    args, unknown = parser.parse_known_args()
+
+    # 让 unittest 跑完不退出进程（便于继续画图）
+    unittest.main(argv=["ignored"] + unknown, exit=False, verbosity=2)
+
+    if args.plot:
+        # 构建配置
+        if args.yaml:
+            cfg_yaml = ConfigYAML(path=args.yaml)        # 你已经在修正版里支持 path= 了
+            gc = GlobalConfig(args.steps, config=cfg_yaml)
+        else:
+            # 使用模块同目录下的 reward_conf.yaml
+            gc = GlobalConfig(args.steps)
+
+        x = list(range(args.steps))
+        y_w5 = [gc.get_w5_SA(t) for t in x]
+        y_w6 = [gc.get_w6_SA(t) for t in x]
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(x, y_w5, label="Dynamic W5 value", linewidth=2)
+        plt.plot(x, y_w6, label="Dynamic W6 value", linewidth=2)
+        plt.title("Cosine annealing of W5/W6")
+        plt.xlabel("Step")
+        plt.ylabel("Value after annealing")
+        plt.grid(alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
