@@ -75,6 +75,67 @@ class ConfigYAML:
     def get_global_param(self, key: str) -> Optional[Union[int, float]]:
         g = self.get_global_config() or {}
         return g.get(key)
+    def _get_hard_reward(self) -> Dict:
+        """获取 hard_reward 根节点（内部辅助方法）"""
+        return self.config.get("hard_reward", {})
+
+    def get_r1_soft_open(self) -> float:
+        """获取 R1_SOFT 中的 R_P_OPEN 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R1", {}).get("R1_SOFT", {}).get("R_P_OPEN", 0.0))
+
+    def get_r1_soft_close(self) -> float:
+        """获取 R1_SOFT 中的 R_P_CLOSE 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R1", {}).get("R1_SOFT", {}).get("R_P_CLOSE", 0.0))
+
+    def get_r1_soft_size(self) -> float:
+        """获取 R1_SOFT 中的 R_P_SIZE 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R1", {}).get("R1_SOFT", {}).get("R_P_SIZE", 0.0))
+
+    def get_r1_hard(self) -> float:
+        """获取 R1_HARD 奖励值，默认 -1.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R1", {}).get("R1_HARD", -1.0))
+
+    def get_r2_parser(self) -> float:
+        """获取 R2 中的 R2_PARSER 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R2", {}).get("R2_PARSER", 0.0))
+
+    def get_r2_p_len(self) -> float:
+        """获取 R2 中的 R2_P_LEN 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R2", {}).get("R2_P_LEN", 0.0))
+
+    def get_r2_p_unique(self) -> float:
+        """获取 R2 中的 R2_P_UNIQUE 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R2", {}).get("R2_P_UNIQUE", 0.0))
+
+    def get_r3_lie(self) -> float:
+        """获取 R3 中的 R3_LIE 惩罚值，默认 -1.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R3", {}).get("R3_LIE", -1.0))
+
+    def get_r3_prec(self) -> float:
+        """获取 R3 中的 R3_PREC 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R3", {}).get("R3_PREC", 0.0))
+
+    def get_r3_jacrard(self) -> float:
+        """获取 R3 中的 R3_JACRARD 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R3", {}).get("R3_JACRARD", 0.0))
+
+    def get_r4_s(self) -> float:
+        """获取 R4 中的 R4_S 奖励值，默认 0.0"""
+        hard_reward = self._get_hard_reward()
+        return float(hard_reward.get("R4", {}).get("R4_S", 0.0))
+
+
+
 
 # ---------- 全局逻辑 ----------
 class GlobalConfig:
@@ -169,15 +230,32 @@ class GlobalConfig:
         gate = self.get_soft_gate(R2_SOFT, R3_SOFT, step)
         return float(gate * (w5 * R2_SOFT + w6 * R3_SOFT))
 
-# 可选：若确实要这个封装
-class ParkingReward:
-    def __init__(self, total_steps: int):
-        self.config = GlobalConfig(total_steps)
-        self.all_step = total_steps
+
 
 
 if __name__ == "__main__":
     cfg = GlobalConfig(1000)
+    config = cfg .getConfig()
+    print(config.get_r1_soft_open())    # 输出 0.4
+    print(config.get_r1_soft_close())   # 输出 0.4
+    print(config.get_r1_soft_size())    # 输出 0.2
+
+    # 获取 R1 硬奖励值
+    print(config.get_r1_hard())         # 输出 -1.0
+
+    # 获取 R2~R4 相关值
+    print(config.get_r2_parser())       # 输出 1.0
+    print(config.get_r2_p_len())       # 输出 1.0
+    print(config.get_r2_p_unique())          # 输出 -1.0
+
+
+    print(config.get_r3_lie())       # 输出 1.0
+    print(config.get_r3_prec())       # 输出 1.0
+    print(config.get_r3_jacrard())          # 输出 -1.0
+
+
+
+    print(config.get_r4_s())            # 输出 2.0
 
     print("阶段阈值（绝对步）:",
           cfg.getStep_T(), cfg.getStep_Fromat(), cfg.getStep_Tw())
